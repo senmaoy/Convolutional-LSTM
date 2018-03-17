@@ -1,0 +1,59 @@
+require 'nn'
+require 'models.LSTM'
+require 'models.LSTMB'
+
+
+local layer, parent = torch.class('nn.renet2', 'nn.Module')
+
+function layer:__init(input_dim,output_dim)
+  self.input_dim =input_dim
+  self.output_dim = output_dim
+  self.output = torch.Tensor()
+  self.gradInput = torch.Tensor()
+  self.lstm11 = nn.LSTM(input_dim,output_dim)
+  self.lstm12 = nn.LSTMB(input_dim,output_dim)
+end
+
+
+function layer:updateOutput(input)
+  local img = input:permute(1,3,4,2):contiguous()
+  local feachannal = self.output_dim
+  self.output:resize(img:size(1),img:size(2),img:size(3),feachannal*2)
+  local out1 = self.output
+  local w = img:size(2)
+  local h = img:size(3)
+  -- the first dimension
+  for i = 1,w do
+    local seq = img[{{},{},{i,i},{}}]:contiguous():squeeze()
+    local outseq1 = self.lstm11:forward(seq)
+    local outseq2 = self.lstm12:forward(seq)
+    out1[{{},{},{i,i},{1,feachannal}}] = outseq1
+    out1[{{},{},{i,i},{feachannal+1,-1}}] = outseq2
+  end
+  -- the second dimension
+  return self.output:permute(1,4,2,3):contiguous()
+
+end
+
+
+function layer:updateGradInput(input, gradOutput)
+  local img = input:permute(1,3,4,2):contiguous()
+  local w = img:size(2)
+  local h = img:size(3)
+  local grad = gradOutput:permute(1,3,4,2):contiguous()
+  local dimg = img:clone()
+  local grad21 = grad[{{},{},{},{1,self.output_dim}}]:contiguous()
+  local grad22 = grad[{{},{},{},{self.output_dim+1,self.output_dim*2}}]:contiguous()
+  for i = 1,w do
+    local seq = img[{{},{},{i,i},{}}]:contiguous():squeeze()
+    local outseq1 = self.lstm11:backward(seq,grad21[{{},{},{i,i},{}}]:contiguous():squeeze())
+    local outseq2 = self.lstm12:backward(seq,grad22[{{},{},{i,i},{}}]:contiguous():squeeze())
+    dimg[{{},{},{i,i},{}}] = outseq1+outseq2
+  end
+  self.gradInput = dimg
+  return self.gradInput
+
+end
+
+
+--collect parameters
